@@ -1,0 +1,44 @@
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# JavaScript/TypeScript
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+
+# Web
+*.html text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+
+# Config
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+
+# Shell
+*.sh text eol=lf
+
+# Lockfiles - no diff, no merge
+package-lock.json -diff -merge linguist-generated
+pnpm-lock.yaml -diff -merge linguist-generated
+yarn.lock -diff -merge linguist-generated
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary

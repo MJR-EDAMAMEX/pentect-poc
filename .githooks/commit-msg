@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# Validate commit message follows Conventional Commits format:
+#   type(scope): description
+#   type: description
+#
+# Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+
+commit_msg_file="$1"
+commit_msg=$(head -1 "$commit_msg_file")
+
+# Allow merge commits
+if echo "$commit_msg" | grep -qE '^Merge '; then
+  exit 0
+fi
+
+# Conventional Commits pattern
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .+'
+
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+  echo "ERROR: Commit message does not follow Conventional Commits format."
+  echo ""
+  echo "  Format: type(scope): description"
+  echo "  Example: feat(auth): add login endpoint"
+  echo ""
+  echo "  Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+  echo ""
+  echo "  Your message: $commit_msg"
+  exit 1
+fi
