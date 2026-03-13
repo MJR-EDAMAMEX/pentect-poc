@@ -182,7 +182,7 @@ async function captureAnimation(page, animationPath) {
   let frameIndex = 0;
 
   try {
-    while (Date.now() - captureStart < 6000) {
+    while (Date.now() - captureStart < 9000) {
       const framePath = path.join(
         tempDir,
         `frame-${String(frameIndex).padStart(3, "0")}.png`
@@ -195,17 +195,17 @@ async function captureAnimation(page, animationPath) {
       );
       if (ready && frameIndex > 6) break;
 
-      await page.waitForTimeout(90);
+      await page.waitForTimeout(125);
     }
 
     await runCommand("ffmpeg", [
       "-y",
       "-framerate",
-      "10",
+      "8",
       "-i",
       framePattern,
       "-vf",
-      "fps=10,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+      "fps=8,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
       animationPath,
     ]);
   } finally {
@@ -243,7 +243,7 @@ async function captureScreenshots() {
         const animationDestination = path.join(outputDir, item.animationFile);
         await captureAnimation(page, animationDestination);
         await waitForMaskingReady(page);
-        await page.waitForTimeout(150);
+        await page.waitForTimeout(220);
 
         const destination = path.join(outputDir, item.stillFile);
         await page.screenshot({ path: destination, fullPage: true, type: "png" });

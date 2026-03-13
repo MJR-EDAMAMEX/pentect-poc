@@ -93,13 +93,15 @@ const CONFIDENCE_COLORS: Record<
   },
 };
 
-const MAX_ANIMATION_STEPS = 12;
-const ANIMATION_TOTAL_MS = 1400;
+const MAX_SCAN_STEPS = 18;
+const ANIMATION_TOTAL_MS = 4600;
 
 interface OutputFrame {
   text: string;
   activeLabels: string[];
   appliedLabels: string[];
+  scanStartLine: number | null;
+  scanEndLine: number | null;
 }
 
 function replaceEverywhere(text: string, original: string, replacement: string): string {
@@ -107,35 +109,36 @@ function replaceEverywhere(text: string, original: string, replacement: string):
   return text.split(original).join(replacement);
 }
 
-function chunkMappings<T>(items: T[], maxSteps: number): T[][] {
-  if (items.length === 0) return [];
-  const chunkSize = Math.max(1, Math.ceil(items.length / maxSteps));
-  const chunks: T[][] = [];
+function lineIndexAtOffset(text: string, offset: number): number {
+  if (offset <= 0) return 0;
+  return text.slice(0, offset).split(/\r?\n/).length - 1;
+}
 
-  for (let index = 0; index < items.length; index += chunkSize) {
-    chunks.push(items.slice(index, index + chunkSize));
+function buildScanRanges(
+  totalLines: number,
+  maxSteps: number
+): Array<{ start: number; end: number }> {
+  if (totalLines <= 0) return [];
+
+  const chunkSize = Math.max(1, Math.ceil(totalLines / maxSteps));
+  const ranges: Array<{ start: number; end: number }> = [];
+
+  for (let start = 0; start < totalLines; start += chunkSize) {
+    ranges.push({
+      start,
+      end: Math.min(totalLines - 1, start + chunkSize - 1),
+    });
   }
 
-  return chunks;
+  return ranges;
 }
 
-function tokenRegex(): RegExp {
-  return /<<[^>]+>>/g;
-}
-
-function getMapping(label: string, mappings: Mapping[]): Mapping | undefined {
-  return mappings.find((entry) => entry.label === label);
-}
-
-function HighlightedOutput({
-  text,
-  mappings,
-  activeLabels,
-}: {
-  text: string;
-  mappings: Mapping[];
-  activeLabels: string[];
-}) {
+function renderHighlightedFragments(
+  text: string,
+  mappings: Mapping[],
+  activeLabels: string[],
+  keyPrefix: string
+) {
   const parts: Array<{ text: string; isToken: boolean }> = [];
   const regex = tokenRegex();
   let lastIndex = 0;
@@ -153,25 +156,73 @@ function HighlightedOutput({
     parts.push({ text: text.slice(lastIndex), isToken: false });
   }
 
+  return parts.map((part, index) => {
+    if (!part.isToken) return <Fragment key={`${keyPrefix}:${index}`}>{part.text}</Fragment>;
+
+    const mapping = getMapping(part.text, mappings);
+    const colors = CONFIDENCE_COLORS[mapping?.confidence ?? "UNKNOWN"];
+    const isActive = mapping !== undefined && activeLabels.includes(mapping.label);
+
+    return (
+      <span
+        key={`${keyPrefix}:${index}`}
+        title={mapping ? `${mapping.original} | ${mapping.reason}` : part.text}
+        className={`inline px-1 py-0.5 rounded-sm border font-semibold transition-all duration-300 ${colors.bg} ${colors.text} ${colors.border} ${
+          isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
+        }`}
+      >
+        {part.text}
+      </span>
+    );
+  });
+}
+
+function tokenRegex(): RegExp {
+  return /<<[^>]+>>/g;
+}
+
+function getMapping(label: string, mappings: Mapping[]): Mapping | undefined {
+  return mappings.find((entry) => entry.label === label);
+}
+
+function HighlightedOutput({
+  text,
+  mappings,
+  activeLabels,
+  scanStartLine,
+  scanEndLine,
+}: {
+  text: string;
+  mappings: Mapping[];
+  activeLabels: string[];
+  scanStartLine: number | null;
+  scanEndLine: number | null;
+}) {
+  const lines = text.split(/\r?\n/);
+
   return (
     <pre className="font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-all m-0">
-      {parts.map((part, index) => {
-        if (!part.isToken) return <Fragment key={index}>{part.text}</Fragment>;
-
-        const mapping = getMapping(part.text, mappings);
-        const colors = CONFIDENCE_COLORS[mapping?.confidence ?? "UNKNOWN"];
-        const isActive =
-          mapping !== undefined && activeLabels.includes(mapping.label);
+      {lines.map((line, index) => {
+        const isScanning =
+          scanStartLine !== null &&
+          scanEndLine !== null &&
+          index >= scanStartLine &&
+          index <= scanEndLine;
 
         return (
           <span
             key={index}
-            title={mapping ? `${mapping.original} | ${mapping.reason}` : part.text}
-            className={`inline px-1 py-0.5 rounded-sm border font-semibold transition-all duration-300 ${colors.bg} ${colors.text} ${colors.border} ${
-              isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
+            className={`relative block rounded-sm px-1 transition-colors duration-300 ${
+              isScanning ? "bg-amber-50/80" : ""
             }`}
           >
-            {part.text}
+            {isScanning && (
+              <span className="pointer-events-none absolute inset-0 rounded-sm bg-gradient-to-r from-transparent via-amber-300/35 to-transparent" />
+            )}
+            <span className="relative">
+              {renderHighlightedFragments(line, mappings, activeLabels, `line-${index}`)}
+            </span>
+            {index < lines.length - 1 ? "\n" : ""}
           </span>
         );
       })}
@@ -196,11 +247,16 @@ function setCaptureReady(ready: boolean): void {
 function buildOutputFrames(input: string, result: MaskResult): OutputFrame[] {
   const originalText = buildOutputBody(input);
   const finalText = buildOutputBody(result.masked);
+  const originalLines = originalText.split(/\r?\n/);
   const indexedMappings = result.mappingTable
     .map((mapping, order) => ({
       mapping,
       order,
       firstIndex: originalText.indexOf(mapping.original),
+      lineIndex:
+        originalText.indexOf(mapping.original) === -1
+          ? Number.MAX_SAFE_INTEGER
+          : lineIndexAtOffset(originalText, originalText.indexOf(mapping.original)),
     }))
     .sort((left, right) => {
       const leftIndex =
@@ -213,47 +269,56 @@ function buildOutputFrames(input: string, result: MaskResult): OutputFrame[] {
         right.mapping.original.length - left.mapping.original.length ||
         left.order - right.order
       );
-    })
-    .map((entry) => entry.mapping);
-
-  const frames: OutputFrame[] = [
-    { text: originalText, activeLabels: [], appliedLabels: [] },
-  ];
+    });
+  const frames: OutputFrame[] = [];
 
   let currentText = originalText;
   const appliedLabels = new Set<string>();
+  const scanRanges = buildScanRanges(originalLines.length, MAX_SCAN_STEPS);
 
-  for (const batch of chunkMappings(indexedMappings, MAX_ANIMATION_STEPS)) {
+  for (const range of scanRanges) {
     const batchLabels: string[] = [];
 
-    for (const mapping of batch) {
-      const nextText = replaceEverywhere(currentText, mapping.original, mapping.label);
-      if (nextText === currentText) continue;
-      currentText = nextText;
-      appliedLabels.add(mapping.label);
-      batchLabels.push(mapping.label);
-    }
+    for (const entry of indexedMappings) {
+      if (entry.lineIndex < range.start || entry.lineIndex > range.end) continue;
+      if (appliedLabels.has(entry.mapping.label)) continue;
 
-    if (batchLabels.length === 0) continue;
+      const nextText = replaceEverywhere(
+        currentText,
+        entry.mapping.original,
+        entry.mapping.label
+      );
+      if (nextText === currentText) continue;
+
+      currentText = nextText;
+      appliedLabels.add(entry.mapping.label);
+      batchLabels.push(entry.mapping.label);
+    }
 
     frames.push({
       text: currentText,
       activeLabels: batchLabels,
       appliedLabels: [...appliedLabels],
+      scanStartLine: range.start,
+      scanEndLine: range.end,
     });
   }
 
-  if (frames[frames.length - 1]?.text !== finalText) {
+  if (frames.length === 0 || frames[frames.length - 1]?.text !== finalText) {
     frames.push({
       text: finalText,
       activeLabels: [],
       appliedLabels: result.mappingTable.map((mapping) => mapping.label),
+      scanStartLine: null,
+      scanEndLine: null,
     });
   } else if (frames.length > 1) {
     frames.push({
       text: finalText,
       activeLabels: [],
       appliedLabels: result.mappingTable.map((mapping) => mapping.label),
+      scanStartLine: null,
+      scanEndLine: null,
     });
   }
 
@@ -268,6 +333,8 @@ export default function App() {
   const [displayText, setDisplayText] = useState(buildOutputBody(SAMPLES.env));
   const [activeLabels, setActiveLabels] = useState<string[]>([]);
   const [appliedLabels, setAppliedLabels] = useState<string[]>([]);
+  const [scanStartLine, setScanStartLine] = useState<number | null>(0);
+  const [scanEndLine, setScanEndLine] = useState<number | null>(0);
   const animationTimers = useRef<number[]>([]);
 
   const primeOutput = (nextInput: string) => {
@@ -275,6 +342,8 @@ export default function App() {
     setDisplayText(buildOutputBody(nextInput));
     setActiveLabels([]);
     setAppliedLabels([]);
+    setScanStartLine(nextInput.trim() ? 0 : null);
+    setScanEndLine(nextInput.trim() ? 0 : null);
     setCaptureReady(!nextInput.trim());
   };
 
@@ -305,31 +374,28 @@ export default function App() {
 
     const frames = buildOutputFrames(input, result);
     const intervalMs = Math.max(
-      90,
-      Math.min(180, Math.floor(ANIMATION_TOTAL_MS / Math.max(frames.length - 1, 1)))
+      260,
+      Math.min(420, Math.floor(ANIMATION_TOTAL_MS / Math.max(frames.length, 1)))
     );
 
-    setCaptureReady(frames.length <= 1);
+    setCaptureReady(frames.length === 0);
 
     const applyFrame = (frame: OutputFrame) => {
       setDisplayText(frame.text);
       setActiveLabels(frame.activeLabels);
       setAppliedLabels(frame.appliedLabels);
+      setScanStartLine(frame.scanStartLine);
+      setScanEndLine(frame.scanEndLine);
     };
 
-    const initialTimeoutId = window.setTimeout(() => {
-      applyFrame(frames[0] ?? { text: "", activeLabels: [], appliedLabels: [] });
-    }, 0);
-    animationTimers.current.push(initialTimeoutId);
-
-    frames.slice(1).forEach((frame, index) => {
+    frames.forEach((frame, index) => {
       const timeoutId = window.setTimeout(() => {
         applyFrame(frame);
 
-        if (index === frames.length - 2) {
+        if (index === frames.length - 1) {
           setCaptureReady(true);
         }
-      }, intervalMs * (index + 1));
+      }, 320 + intervalMs * index);
 
       animationTimers.current.push(timeoutId);
     });
@@ -417,6 +483,8 @@ export default function App() {
                   text={displayText}
                   mappings={result?.mappingTable ?? []}
                   activeLabels={activeLabels}
+                  scanStartLine={scanStartLine}
+                  scanEndLine={scanEndLine}
                 />
               ) : (
                 <div />
@@ -438,7 +506,9 @@ export default function App() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {result.mappingTable.map((mapping) => {
+                  {result.mappingTable
+                    .filter((mapping) => appliedLabels.includes(mapping.label))
+                    .map((mapping) => {
                     const colors = CONFIDENCE_COLORS[mapping.confidence];
                     const isActive = activeLabels.includes(mapping.label);
                     const isApplied = appliedLabels.includes(mapping.label);
