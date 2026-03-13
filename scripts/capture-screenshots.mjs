@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { access, cp, mkdir } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -34,9 +35,24 @@ const mirrorDir = args.get("--mirror-dir")
   : null;
 
 const screenshotPlan = [
-  { key: "env", button: "ENV", file: "pentect-env.png" },
-  { key: "nmap", button: "NMAP", file: "pentect-nmap.png" },
-  { key: "har", button: "HAR", file: "pentect-har.png" },
+  {
+    key: "env",
+    button: "ENV",
+    stillFile: "pentect-env.png",
+    animationFile: "pentect-env.gif",
+  },
+  {
+    key: "nmap",
+    button: "NMAP",
+    stillFile: "pentect-nmap.png",
+    animationFile: "pentect-nmap.gif",
+  },
+  {
+    key: "har",
+    button: "HAR",
+    stillFile: "pentect-har.png",
+    animationFile: "pentect-har.gif",
+  },
 ];
 
 const chromeCandidates = [
@@ -88,6 +104,42 @@ async function waitForMaskingReady(page, timeoutMs = 10000) {
   );
 }
 
+async function waitForMaskingStart(page, timeoutMs = 1500) {
+  await page
+    .waitForFunction(
+      () => document.documentElement.dataset.pentectReady !== "true",
+      { timeout: timeoutMs }
+    )
+    .catch(() => undefined);
+}
+
+function runCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+      process.stderr.write(chunk);
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve(undefined);
+        return;
+      }
+
+      reject(new Error(`${command} exited with code ${code}\n${stderr}`));
+    });
+  });
+}
+
 function startDevServer() {
   const viteBin = path.join(repoRoot, "node_modules", ".bin", "vite");
   const child = spawn(viteBin, ["--host", host, "--port", String(port)], {
@@ -123,6 +175,44 @@ async function ensureDirs() {
   }
 }
 
+async function captureAnimation(page, animationPath) {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "pentect-gif-"));
+  const framePattern = path.join(tempDir, "frame-%03d.png");
+  const captureStart = Date.now();
+  let frameIndex = 0;
+
+  try {
+    while (Date.now() - captureStart < 6000) {
+      const framePath = path.join(
+        tempDir,
+        `frame-${String(frameIndex).padStart(3, "0")}.png`
+      );
+      await page.screenshot({ path: framePath, fullPage: true, type: "png" });
+      frameIndex += 1;
+
+      const ready = await page.evaluate(
+        () => document.documentElement.dataset.pentectReady === "true"
+      );
+      if (ready && frameIndex > 6) break;
+
+      await page.waitForTimeout(90);
+    }
+
+    await runCommand("ffmpeg", [
+      "-y",
+      "-framerate",
+      "10",
+      "-i",
+      framePattern,
+      "-vf",
+      "fps=10,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+      animationPath,
+    ]);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function captureScreenshots() {
   const chromePath = await resolveChromePath();
   const baseUrl = `http://${host}:${port}/`;
@@ -140,22 +230,31 @@ async function captureScreenshots() {
       const page = await browser.newPage({
         viewport: { width: 1500, height: 1300 },
       });
-      await page.goto(baseUrl, { waitUntil: "networkidle" });
-      await waitForMaskingReady(page);
+      await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
 
-      for (const item of screenshotPlan) {
-        await page.getByRole("button", { name: item.button, exact: true }).click();
+      for (const [index, item] of screenshotPlan.entries()) {
+        if (index === 0) {
+          await waitForMaskingStart(page);
+        } else {
+          await page.getByRole("button", { name: item.button, exact: true }).click();
+          await waitForMaskingStart(page);
+        }
+
+        const animationDestination = path.join(outputDir, item.animationFile);
+        await captureAnimation(page, animationDestination);
         await waitForMaskingReady(page);
         await page.waitForTimeout(150);
 
-        const destination = path.join(outputDir, item.file);
+        const destination = path.join(outputDir, item.stillFile);
         await page.screenshot({ path: destination, fullPage: true, type: "png" });
 
         if (mirrorDir) {
-          await cp(destination, path.join(mirrorDir, item.file));
+          await cp(destination, path.join(mirrorDir, item.stillFile));
+          await cp(animationDestination, path.join(mirrorDir, item.animationFile));
         }
 
         process.stdout.write(`saved ${destination}\n`);
+        process.stdout.write(`saved ${animationDestination}\n`);
       }
     } finally {
       await browser.close();

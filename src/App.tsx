@@ -270,6 +270,14 @@ export default function App() {
   const [appliedLabels, setAppliedLabels] = useState<string[]>([]);
   const animationTimers = useRef<number[]>([]);
 
+  const primeOutput = (nextInput: string) => {
+    setResult(null);
+    setDisplayText(buildOutputBody(nextInput));
+    setActiveLabels([]);
+    setAppliedLabels([]);
+    setCaptureReady(!nextInput.trim());
+  };
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       if (!input.trim()) {
@@ -292,7 +300,6 @@ export default function App() {
     animationTimers.current = [];
 
     if (!result) {
-      setCaptureReady(true);
       return;
     }
 
@@ -342,7 +349,9 @@ export default function App() {
 
   const loadSource = (nextSource: SourceType) => {
     setSourceType(nextSource);
-    setInput(SAMPLES[nextSource]);
+    const nextInput = SAMPLES[nextSource];
+    setInput(nextInput);
+    primeOutput(nextInput);
   };
 
   return (
@@ -373,7 +382,11 @@ export default function App() {
             </div>
             <Textarea
               value={input}
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) => {
+                const nextInput = event.target.value;
+                setInput(nextInput);
+                primeOutput(nextInput);
+              }}
               placeholder={placeholderFor(sourceType)}
               spellCheck={false}
               className="min-h-[260px] resize-none bg-muted/30 font-mono text-[13px] leading-relaxed sm:min-h-[460px]"
@@ -399,10 +412,10 @@ export default function App() {
               </Button>
             </div>
             <div className="min-h-[260px] overflow-auto rounded-xl border border-input bg-muted/30 p-3 sm:min-h-[460px]">
-              {result ? (
+              {displayText ? (
                 <HighlightedOutput
                   text={displayText}
-                  mappings={result.mappingTable}
+                  mappings={result?.mappingTable ?? []}
                   activeLabels={activeLabels}
                 />
               ) : (
