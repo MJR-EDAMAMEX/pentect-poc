@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "screenshots": "bun scripts/capture-screenshots.mjs"
+    "screenshots": "bun scripts/capture-screenshots.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

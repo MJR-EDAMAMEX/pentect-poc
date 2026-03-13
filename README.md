@@ -1,9 +1,18 @@
-Pentect PoC
+# Pentect PoC
 
-`Pentect` is a local-first masking playground for `.env`, `nmap`-style logs, and HAR files.
-It emits a research-aligned `AI bundle`: flattened masked body plus aggregate summary sidecar.
+`Pentect` は `.env`、`nmap` ログ、HAR を安全な形に変換するためのローカル PoC です。出力はマスク済み本文と対応表に絞っています。
 
-```llvm
+```bash
 bun i
 bun dev
 ```
+
+```bash
+bun run screenshots -- --mirror-dir ../masking-engine
+```
+
+## Screenshots
+
+![Pentect env demo](./docs/screenshots/pentect-env.png)
+![Pentect nmap demo](./docs/screenshots/pentect-nmap.png)
+![Pentect har demo](./docs/screenshots/pentect-har.png)

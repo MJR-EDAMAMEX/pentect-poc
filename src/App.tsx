@@ -94,24 +94,41 @@ const CONFIDENCE_COLORS: Record<
 };
 
 const MAX_SCAN_STEPS = 18;
-const ANIMATION_TOTAL_MS = 6800;
+const ANIMATION_TOTAL_MS = 9200;
 
 interface OutputFrame {
   text: string;
   activeLabels: string[];
-  appliedLabels: string[];
+  tableMappings: Mapping[];
   scanStartLine: number | null;
   scanEndLine: number | null;
-}
-
-function replaceEverywhere(text: string, original: string, replacement: string): string {
-  if (!original) return text;
-  return text.split(original).join(replacement);
 }
 
 function lineIndexAtOffset(text: string, offset: number): number {
   if (offset <= 0) return 0;
   return text.slice(0, offset).split(/\r?\n/).length - 1;
+}
+
+function parseLabelParts(label: string): { prefix: string; number: number } | null {
+  const match = label.match(/^<<([A-Z]+)_(\d+)>>$/);
+  if (!match) return null;
+
+  return {
+    prefix: match[1],
+    number: Number.parseInt(match[2], 10),
+  };
+}
+
+function replaceSorted(text: string, replacements: Array<[string, string]>): string {
+  let result = text;
+  const sorted = [...replacements].sort((left, right) => right[0].length - left[0].length);
+
+  for (const [from, to] of sorted) {
+    if (!from || from === to) continue;
+    result = result.split(from).join(to);
+  }
+
+  return result;
 }
 
 function buildScanRanges(
@@ -131,6 +148,39 @@ function buildScanRanges(
   }
 
   return ranges;
+}
+
+function buildLineDiffRange(
+  previousText: string,
+  nextText: string
+): { prefix: number; suffix: number; changedCount: number } {
+  const previousLines = previousText.split(/\r?\n/);
+  const nextLines = nextText.split(/\r?\n/);
+  let prefix = 0;
+
+  while (
+    prefix < previousLines.length &&
+    prefix < nextLines.length &&
+    previousLines[prefix] === nextLines[prefix]
+  ) {
+    prefix += 1;
+  }
+
+  let suffix = 0;
+  while (
+    suffix < previousLines.length - prefix &&
+    suffix < nextLines.length - prefix &&
+    previousLines[previousLines.length - 1 - suffix] ===
+      nextLines[nextLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+
+  return {
+    prefix,
+    suffix,
+    changedCount: Math.max(0, nextLines.length - prefix - suffix),
+  };
 }
 
 function renderHighlightedFragments(
@@ -201,7 +251,7 @@ function HighlightedOutput({
   const lines = text.split(/\r?\n/);
 
   return (
-    <pre className="font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-all m-0">
+    <pre className="m-0 whitespace-pre-wrap break-all font-mono text-[13px] leading-6">
       {lines.map((line, index) => {
         const isScanning =
           scanStartLine !== null &&
@@ -212,8 +262,8 @@ function HighlightedOutput({
         return (
           <span
             key={index}
-            className={`relative block rounded-sm px-1 transition-colors duration-300 ${
-              isScanning ? "bg-amber-100/70" : ""
+            className={`relative block px-1 transition-colors duration-300 ${
+              isScanning ? "bg-amber-100" : ""
             }`}
           >
             <span className="relative">
@@ -240,20 +290,100 @@ function setCaptureReady(ready: boolean): void {
   document.documentElement.dataset.pentectReady = ready ? "true" : "false";
 }
 
-function buildOutputFrames(input: string, result: MaskResult): OutputFrame[] {
-  const originalText = buildOutputBody(input);
-  const finalText = buildOutputBody(result.masked);
-  const originalLines = originalText.split(/\r?\n/);
-  const indexedMappings = result.mappingTable
-    .map((mapping, order) => ({
-      mapping,
-      order,
-      firstIndex: originalText.indexOf(mapping.original),
-      lineIndex:
-        originalText.indexOf(mapping.original) === -1
-          ? Number.MAX_SAFE_INTEGER
-          : lineIndexAtOffset(originalText, originalText.indexOf(mapping.original)),
-    }))
+function reconcileResultLabels(
+  nextResult: MaskResult,
+  previousResult: MaskResult | null
+): MaskResult {
+  if (!previousResult) return nextResult;
+
+  const previousByOriginal = new Map(
+    previousResult.mappingTable.map((mapping) => [mapping.original, mapping])
+  );
+  const usedLabels = new Set<string>();
+  const counters = new Map<string, number>();
+
+  for (const mapping of previousResult.mappingTable) {
+    const parts = parseLabelParts(mapping.label);
+    if (!parts) continue;
+    counters.set(parts.prefix, Math.max(counters.get(parts.prefix) ?? 0, parts.number));
+  }
+
+  const replacements: Array<[string, string]> = [];
+  const remappedMappings = nextResult.mappingTable.map((mapping) => {
+    const currentParts = parseLabelParts(mapping.label);
+    const previous = previousByOriginal.get(mapping.original);
+    let nextLabel = mapping.label;
+
+    if (previous && !usedLabels.has(previous.label)) {
+      const previousParts = parseLabelParts(previous.label);
+      if (
+        currentParts &&
+        previousParts &&
+        currentParts.prefix === previousParts.prefix
+      ) {
+        nextLabel = previous.label;
+      }
+    }
+
+    if (usedLabels.has(nextLabel)) {
+      const prefix = currentParts?.prefix ?? "VALUE";
+      const nextNumber = (counters.get(prefix) ?? 0) + 1;
+      counters.set(prefix, nextNumber);
+      nextLabel = `<<${prefix}_${String(nextNumber).padStart(3, "0")}>>`;
+    } else if (currentParts) {
+      counters.set(
+        currentParts.prefix,
+        Math.max(counters.get(currentParts.prefix) ?? 0, currentParts.number)
+      );
+    }
+
+    usedLabels.add(nextLabel);
+    replacements.push([mapping.label, nextLabel]);
+
+    return {
+      ...mapping,
+      label: nextLabel,
+    };
+  });
+
+  return {
+    ...nextResult,
+    masked: replaceSorted(nextResult.masked, replacements),
+    aiBundle: replaceSorted(nextResult.aiBundle, replacements),
+    mappingTable: remappedMappings,
+  };
+}
+
+function buildDiffOutputFrames(
+  previousInput: string | null,
+  nextInput: string,
+  previousResult: MaskResult | null,
+  nextResult: MaskResult
+): OutputFrame[] {
+  const initialText = previousResult
+    ? buildOutputBody(previousResult.masked)
+    : buildOutputBody(nextInput);
+  const finalText = buildOutputBody(nextResult.masked);
+  const initialLines = initialText.split(/\r?\n/);
+  const finalLines = finalText.split(/\r?\n/);
+  const previousLabels = previousResult?.mappingTable ?? [];
+  const inputChanged = previousInput !== null && previousInput !== nextInput;
+  const nextOrder = new Map(
+    nextResult.mappingTable.map((mapping, index) => [mapping.label, index])
+  );
+  const nextLineMappings = nextResult.mappingTable
+    .map((mapping, order) => {
+      const firstIndex = nextInput.indexOf(mapping.original);
+      return {
+        mapping,
+        order,
+        firstIndex,
+        lineIndex:
+          firstIndex === -1
+            ? Number.MAX_SAFE_INTEGER
+            : lineIndexAtOffset(nextInput, firstIndex),
+      };
+    })
     .sort((left, right) => {
       const leftIndex =
         left.firstIndex === -1 ? Number.MAX_SAFE_INTEGER : left.firstIndex;
@@ -266,59 +396,81 @@ function buildOutputFrames(input: string, result: MaskResult): OutputFrame[] {
         left.order - right.order
       );
     });
+  const diffRange = previousResult
+    ? buildLineDiffRange(previousInput ?? "", nextInput)
+    : {
+        prefix: 0,
+        suffix: 0,
+        changedCount: finalLines.length,
+      };
+  const scanRanges =
+    diffRange.changedCount > 0
+      ? buildScanRanges(diffRange.changedCount, MAX_SCAN_STEPS).map((range) => ({
+          start: diffRange.prefix + range.start,
+          end: diffRange.prefix + range.end,
+        }))
+      : [];
   const frames: OutputFrame[] = [];
-
-  let currentText = originalText;
-  const appliedLabels = new Set<string>();
-  const scanRanges = buildScanRanges(originalLines.length, MAX_SCAN_STEPS);
+  const visibleMappings = new Map(previousLabels.map((mapping) => [mapping.label, mapping]));
 
   for (const range of scanRanges) {
-    const batchLabels: string[] = [];
+    const newLabels: string[] = [];
 
-    for (const entry of indexedMappings) {
+    for (const entry of nextLineMappings) {
       if (entry.lineIndex < range.start || entry.lineIndex > range.end) continue;
-      if (appliedLabels.has(entry.mapping.label)) continue;
 
-      const nextText = replaceEverywhere(
-        currentText,
-        entry.mapping.original,
-        entry.mapping.label
-      );
-      if (nextText === currentText) continue;
+      const previousVisible = visibleMappings.get(entry.mapping.label);
+      const mappingChanged =
+        !previousVisible ||
+        previousVisible.original !== entry.mapping.original ||
+        previousVisible.confidence !== entry.mapping.confidence ||
+        previousVisible.reason !== entry.mapping.reason;
 
-      currentText = nextText;
-      appliedLabels.add(entry.mapping.label);
-      batchLabels.push(entry.mapping.label);
+      if (!mappingChanged) continue;
+
+      visibleMappings.set(entry.mapping.label, entry.mapping);
+      newLabels.push(entry.mapping.label);
     }
 
+    const scannedCount = range.end - diffRange.prefix + 1;
+    const previousChangeEnd = initialLines.length - diffRange.suffix;
+    const nextChangeEnd = finalLines.length - diffRange.suffix;
+    const currentLines = [
+      ...finalLines.slice(0, diffRange.prefix + scannedCount),
+      ...initialLines.slice(
+        Math.min(diffRange.prefix + scannedCount, previousChangeEnd),
+        previousChangeEnd
+      ),
+      ...finalLines.slice(nextChangeEnd),
+    ];
+
     frames.push({
-      text: currentText,
-      activeLabels: batchLabels,
-      appliedLabels: [...appliedLabels],
+      text: currentLines.join("\n"),
+      activeLabels: newLabels,
+      tableMappings: [...visibleMappings.values()].sort((left, right) => {
+        return (
+          (nextOrder.get(left.label) ?? Number.MAX_SAFE_INTEGER) -
+          (nextOrder.get(right.label) ?? Number.MAX_SAFE_INTEGER)
+        );
+      }),
       scanStartLine: range.start,
       scanEndLine: range.end,
     });
   }
 
-  if (frames.length === 0 || frames[frames.length - 1]?.text !== finalText) {
-    frames.push({
-      text: finalText,
-      activeLabels: [],
-      appliedLabels: result.mappingTable.map((mapping) => mapping.label),
-      scanStartLine: null,
-      scanEndLine: null,
-    });
-  } else if (frames.length > 1) {
-    frames.push({
-      text: finalText,
-      activeLabels: [],
-      appliedLabels: result.mappingTable.map((mapping) => mapping.label),
-      scanStartLine: null,
-      scanEndLine: null,
-    });
+  frames.push({
+    text: finalText,
+    activeLabels: [],
+    tableMappings: nextResult.mappingTable,
+    scanStartLine: null,
+    scanEndLine: null,
+  });
+
+  if (!previousResult) {
+    return frames;
   }
 
-  return frames;
+  return inputChanged ? frames : [frames[frames.length - 1]];
 }
 
 export default function App() {
@@ -328,20 +480,13 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [displayText, setDisplayText] = useState(buildOutputBody(SAMPLES.env));
   const [activeLabels, setActiveLabels] = useState<string[]>([]);
-  const [appliedLabels, setAppliedLabels] = useState<string[]>([]);
+  const [tableMappings, setTableMappings] = useState<Mapping[]>([]);
   const [scanStartLine, setScanStartLine] = useState<number | null>(0);
   const [scanEndLine, setScanEndLine] = useState<number | null>(0);
   const animationTimers = useRef<number[]>([]);
-
-  const primeOutput = (nextInput: string) => {
-    setResult(null);
-    setDisplayText(buildOutputBody(nextInput));
-    setActiveLabels([]);
-    setAppliedLabels([]);
-    setScanStartLine(nextInput.trim() ? 0 : null);
-    setScanEndLine(nextInput.trim() ? 0 : null);
-    setCaptureReady(!nextInput.trim());
-  };
+  const previousResultRef = useRef<MaskResult | null>(null);
+  const previousInputRef = useRef<string | null>(null);
+  const previousSourceTypeRef = useRef<SourceType>("env");
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -351,7 +496,15 @@ export default function App() {
       }
 
       try {
-        setResult(maskOutput(input, sourceType, DEFAULT_MASK_OPTIONS));
+        const previousResult =
+          previousSourceTypeRef.current === sourceType
+            ? previousResultRef.current
+            : null;
+        const stableResult = reconcileResultLabels(
+          maskOutput(input, sourceType, DEFAULT_MASK_OPTIONS),
+          previousResult
+        );
+        setResult(stableResult);
       } catch {
         setResult(null);
       }
@@ -364,31 +517,55 @@ export default function App() {
     animationTimers.current.forEach((timer) => window.clearTimeout(timer));
     animationTimers.current = [];
 
-    if (!result) {
-      return;
-    }
-
-    const frames = buildOutputFrames(input, result);
-    const intervalMs = Math.max(
-      360,
-      Math.min(620, Math.floor(ANIMATION_TOTAL_MS / Math.max(frames.length, 1)))
-    );
-
-    setCaptureReady(frames.length === 0);
-
     const applyFrame = (frame: OutputFrame) => {
       setDisplayText(frame.text);
       setActiveLabels(frame.activeLabels);
-      setAppliedLabels(frame.appliedLabels);
+      setTableMappings(frame.tableMappings);
       setScanStartLine(frame.scanStartLine);
       setScanEndLine(frame.scanEndLine);
     };
+
+    if (!result) {
+      setCaptureReady(false);
+      const timeoutId = window.setTimeout(() => {
+        applyFrame({
+          text: buildOutputBody(input),
+          activeLabels: [],
+          tableMappings: [],
+          scanStartLine: null,
+          scanEndLine: null,
+        });
+        previousResultRef.current = null;
+        previousInputRef.current = input;
+        previousSourceTypeRef.current = sourceType;
+        setCaptureReady(true);
+      }, 0);
+
+      animationTimers.current.push(timeoutId);
+
+      return;
+    }
+
+    const previousResult =
+      previousSourceTypeRef.current === sourceType ? previousResultRef.current : null;
+    const previousInput =
+      previousSourceTypeRef.current === sourceType ? previousInputRef.current : null;
+    const frames = buildDiffOutputFrames(previousInput, input, previousResult, result);
+    const intervalMs = Math.max(
+      480,
+      Math.min(900, Math.floor(ANIMATION_TOTAL_MS / Math.max(frames.length, 1)))
+    );
+
+    setCaptureReady(false);
 
     frames.forEach((frame, index) => {
       const timeoutId = window.setTimeout(() => {
         applyFrame(frame);
 
         if (index === frames.length - 1) {
+          previousResultRef.current = result;
+          previousInputRef.current = input;
+          previousSourceTypeRef.current = sourceType;
           setCaptureReady(true);
         }
       }, 520 + intervalMs * index);
@@ -400,7 +577,7 @@ export default function App() {
       animationTimers.current.forEach((timer) => window.clearTimeout(timer));
       animationTimers.current = [];
     };
-  }, [input, result]);
+  }, [input, result, sourceType]);
 
   const handleCopy = async () => {
     if (!result) return;
@@ -411,9 +588,8 @@ export default function App() {
 
   const loadSource = (nextSource: SourceType) => {
     setSourceType(nextSource);
-    const nextInput = SAMPLES[nextSource];
-    setInput(nextInput);
-    primeOutput(nextInput);
+    setInput(SAMPLES[nextSource]);
+    setCaptureReady(false);
   };
 
   return (
@@ -445,9 +621,8 @@ export default function App() {
             <Textarea
               value={input}
               onChange={(event) => {
-                const nextInput = event.target.value;
-                setInput(nextInput);
-                primeOutput(nextInput);
+                setInput(event.target.value);
+                setCaptureReady(false);
               }}
               placeholder={placeholderFor(sourceType)}
               spellCheck={false}
@@ -477,7 +652,7 @@ export default function App() {
               {displayText ? (
                 <HighlightedOutput
                   text={displayText}
-                  mappings={result?.mappingTable ?? []}
+                  mappings={tableMappings}
                   activeLabels={activeLabels}
                   scanStartLine={scanStartLine}
                   scanEndLine={scanEndLine}
@@ -489,79 +664,58 @@ export default function App() {
           </div>
         </section>
 
-        {result && result.mappingTable.length > 0 && (
-          <section className="mt-5 rounded-2xl border border-border bg-card p-4">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/30">
-                    <TableHead className="w-[180px] text-xs">ラベル</TableHead>
-                    <TableHead className="text-xs">元の値</TableHead>
-                    <TableHead className="w-[100px] text-xs">確信度</TableHead>
-                    <TableHead className="text-xs">理由</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {result.mappingTable.map((mapping) => {
-                    const colors = CONFIDENCE_COLORS[mapping.confidence];
-                    const isActive = activeLabels.includes(mapping.label);
-                    const isApplied = appliedLabels.includes(mapping.label);
-                    return (
-                      <TableRow
-                        key={`${mapping.label}:${mapping.original}`}
-                        className={`transition-colors duration-300 ${
-                          isActive
-                            ? "bg-amber-50/80"
-                            : isApplied
-                              ? "bg-emerald-50/40"
-                              : ""
-                        }`}
-                      >
-                        <TableCell className="py-2">
-                          <code
-                            className={`rounded-sm border px-1.5 py-0.5 text-xs transition-all duration-300 ${
-                              isApplied
-                                ? `${colors.bg} ${colors.text} ${colors.border}`
-                                : "border-border bg-muted/50 text-foreground/80"
-                            } ${
-                              isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
-                            }`}
-                          >
-                            {mapping.label}
-                          </code>
-                        </TableCell>
-                        <TableCell
-                          className={`break-all py-2 font-mono text-xs transition-colors duration-300 ${
-                            isApplied ? "text-muted-foreground" : "text-foreground/80"
+        <section className="mt-5 rounded-2xl border border-border bg-card p-4">
+          <div className="min-h-[220px] overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/30">
+                  <TableHead className="w-[180px] text-xs">ラベル</TableHead>
+                  <TableHead className="text-xs">元の値</TableHead>
+                  <TableHead className="w-[100px] text-xs">確信度</TableHead>
+                  <TableHead className="text-xs">理由</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tableMappings.map((mapping) => {
+                  const colors = CONFIDENCE_COLORS[mapping.confidence];
+                  const isActive = activeLabels.includes(mapping.label);
+                  return (
+                    <TableRow
+                      key={`${mapping.label}:${mapping.original}`}
+                      className={`transition-colors duration-300 ${
+                        isActive ? "bg-amber-50/80" : ""
+                      }`}
+                    >
+                      <TableCell className="py-2">
+                        <code
+                          className={`rounded-sm border px-1.5 py-0.5 text-xs transition-all duration-300 ${colors.bg} ${colors.text} ${colors.border} ${
+                            isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
                           }`}
                         >
-                          {mapping.original}
-                        </TableCell>
-                        <TableCell className="py-2">
-                          <Badge
-                            variant="secondary"
-                            className={`px-1.5 py-0 text-[10px] transition-opacity duration-300 ${
-                              isApplied ? colors.badge : "bg-muted text-muted-foreground"
-                            }`}
-                          >
-                            {mapping.confidence}
-                          </Badge>
-                        </TableCell>
-                        <TableCell
-                          className={`py-2 text-xs transition-colors duration-300 ${
-                            isApplied ? "text-muted-foreground" : "text-foreground/75"
-                          }`}
+                          {mapping.label}
+                        </code>
+                      </TableCell>
+                      <TableCell className="break-all py-2 font-mono text-xs text-muted-foreground">
+                        {mapping.original}
+                      </TableCell>
+                      <TableCell className="py-2">
+                        <Badge
+                          variant="secondary"
+                          className={`px-1.5 py-0 text-[10px] ${colors.badge}`}
                         >
-                          {mapping.reason}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
-        )}
+                          {mapping.confidence}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="py-2 text-xs text-muted-foreground">
+                        {mapping.reason}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
       </main>
     </div>
   );
