@@ -81,6 +81,13 @@ async function waitForServer(url, timeoutMs = 20000) {
   throw new Error(`Timed out waiting for dev server: ${url}`);
 }
 
+async function waitForMaskingReady(page, timeoutMs = 10000) {
+  await page.waitForFunction(
+    () => document.documentElement.dataset.pentectReady === "true",
+    { timeout: timeoutMs }
+  );
+}
+
 function startDevServer() {
   const viteBin = path.join(repoRoot, "node_modules", ".bin", "vite");
   const child = spawn(viteBin, ["--host", host, "--port", String(port)], {
@@ -134,10 +141,12 @@ async function captureScreenshots() {
         viewport: { width: 1500, height: 1300 },
       });
       await page.goto(baseUrl, { waitUntil: "networkidle" });
+      await waitForMaskingReady(page);
 
       for (const item of screenshotPlan) {
         await page.getByRole("button", { name: item.button, exact: true }).click();
-        await page.waitForTimeout(500);
+        await waitForMaskingReady(page);
+        await page.waitForTimeout(150);
 
         const destination = path.join(outputDir, item.file);
         await page.screenshot({ path: destination, fullPage: true, type: "png" });
