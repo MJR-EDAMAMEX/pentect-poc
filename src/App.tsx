@@ -506,9 +506,7 @@ export default function App() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {result.mappingTable
-                    .filter((mapping) => appliedLabels.includes(mapping.label))
-                    .map((mapping) => {
+                  {result.mappingTable.map((mapping) => {
                     const colors = CONFIDENCE_COLORS[mapping.confidence];
                     const isActive = activeLabels.includes(mapping.label);
                     const isApplied = appliedLabels.includes(mapping.label);
@@ -525,7 +523,11 @@ export default function App() {
                       >
                         <TableCell className="py-2">
                           <code
-                            className={`rounded-sm border px-1.5 py-0.5 text-xs transition-all duration-300 ${colors.bg} ${colors.text} ${colors.border} ${
+                            className={`rounded-sm border px-1.5 py-0.5 text-xs transition-all duration-300 ${
+                              isApplied
+                                ? `${colors.bg} ${colors.text} ${colors.border}`
+                                : "border-border bg-muted/40 text-muted-foreground/70"
+                            } ${
                               isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
                             }`}
                           >
@@ -533,18 +535,24 @@ export default function App() {
                           </code>
                         </TableCell>
                         <TableCell className="break-all py-2 font-mono text-xs text-muted-foreground">
-                          {mapping.original}
+                          <span className={isApplied ? "" : "invisible"}>
+                            {mapping.original}
+                          </span>
                         </TableCell>
                         <TableCell className="py-2">
                           <Badge
                             variant="secondary"
-                            className={`px-1.5 py-0 text-[10px] ${colors.badge}`}
+                            className={`px-1.5 py-0 text-[10px] ${
+                              isApplied ? colors.badge : "invisible"
+                            }`}
                           >
                             {mapping.confidence}
                           </Badge>
                         </TableCell>
                         <TableCell className="py-2 text-xs text-muted-foreground">
-                          {mapping.reason}
+                          <span className={isApplied ? "" : "invisible"}>
+                            {mapping.reason}
+                          </span>
                         </TableCell>
                       </TableRow>
                     );
