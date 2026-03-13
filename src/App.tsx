@@ -94,7 +94,7 @@ const CONFIDENCE_COLORS: Record<
 };
 
 const MAX_SCAN_STEPS = 18;
-const ANIMATION_TOTAL_MS = 4600;
+const ANIMATION_TOTAL_MS = 6800;
 
 interface OutputFrame {
   text: string;
@@ -213,16 +213,12 @@ function HighlightedOutput({
           <span
             key={index}
             className={`relative block rounded-sm px-1 transition-colors duration-300 ${
-              isScanning ? "bg-amber-50/80" : ""
+              isScanning ? "bg-amber-100/70" : ""
             }`}
           >
-            {isScanning && (
-              <span className="pointer-events-none absolute inset-0 rounded-sm bg-gradient-to-r from-transparent via-amber-300/35 to-transparent" />
-            )}
             <span className="relative">
               {renderHighlightedFragments(line, mappings, activeLabels, `line-${index}`)}
             </span>
-            {index < lines.length - 1 ? "\n" : ""}
           </span>
         );
       })}
@@ -374,8 +370,8 @@ export default function App() {
 
     const frames = buildOutputFrames(input, result);
     const intervalMs = Math.max(
-      260,
-      Math.min(420, Math.floor(ANIMATION_TOTAL_MS / Math.max(frames.length, 1)))
+      360,
+      Math.min(620, Math.floor(ANIMATION_TOTAL_MS / Math.max(frames.length, 1)))
     );
 
     setCaptureReady(frames.length === 0);
@@ -395,7 +391,7 @@ export default function App() {
         if (index === frames.length - 1) {
           setCaptureReady(true);
         }
-      }, 320 + intervalMs * index);
+      }, 520 + intervalMs * index);
 
       animationTimers.current.push(timeoutId);
     });
@@ -526,7 +522,7 @@ export default function App() {
                             className={`rounded-sm border px-1.5 py-0.5 text-xs transition-all duration-300 ${
                               isApplied
                                 ? `${colors.bg} ${colors.text} ${colors.border}`
-                                : "border-border bg-muted/40 text-muted-foreground/70"
+                                : "border-border bg-muted/50 text-foreground/80"
                             } ${
                               isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
                             }`}
@@ -534,25 +530,29 @@ export default function App() {
                             {mapping.label}
                           </code>
                         </TableCell>
-                        <TableCell className="break-all py-2 font-mono text-xs text-muted-foreground">
-                          <span className={isApplied ? "" : "invisible"}>
-                            {mapping.original}
-                          </span>
+                        <TableCell
+                          className={`break-all py-2 font-mono text-xs transition-colors duration-300 ${
+                            isApplied ? "text-muted-foreground" : "text-foreground/80"
+                          }`}
+                        >
+                          {mapping.original}
                         </TableCell>
                         <TableCell className="py-2">
                           <Badge
                             variant="secondary"
-                            className={`px-1.5 py-0 text-[10px] ${
-                              isApplied ? colors.badge : "invisible"
+                            className={`px-1.5 py-0 text-[10px] transition-opacity duration-300 ${
+                              isApplied ? colors.badge : "bg-muted text-muted-foreground"
                             }`}
                           >
                             {mapping.confidence}
                           </Badge>
                         </TableCell>
-                        <TableCell className="py-2 text-xs text-muted-foreground">
-                          <span className={isApplied ? "" : "invisible"}>
-                            {mapping.reason}
-                          </span>
+                        <TableCell
+                          className={`py-2 text-xs transition-colors duration-300 ${
+                            isApplied ? "text-muted-foreground" : "text-foreground/75"
+                          }`}
+                        >
+                          {mapping.reason}
                         </TableCell>
                       </TableRow>
                     );
