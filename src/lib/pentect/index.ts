@@ -3,12 +3,10 @@ export type Confidence = "HIGH" | "LIKELY" | "MAYBE" | "UNKNOWN";
 export type SourceType = "env" | "nmap" | "har";
 
 export interface MaskOptions {
-  normalizeContext: boolean;
   includeSummary: boolean;
 }
 
 export const DEFAULT_MASK_OPTIONS: MaskOptions = {
-  normalizeContext: true,
   includeSummary: true,
 };
 
@@ -66,7 +64,6 @@ const FQDN_SINGLE_RE =
 const AUTH_VALUE_RE = /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}\b/g;
 const HAR_HEADER_RE =
   /^(authorization|cookie|set-cookie|x-api-key|proxy-authorization|x-auth-token)$/i;
-const TOKEN_RE = /<<[^>]+>>/g;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -313,29 +310,12 @@ function splitStreamingChunks(text: string, maxLines = CHUNK_MAX_LINES): string[
   return chunks.length > 0 ? chunks : [""];
 }
 
-function normalizeMaskedLine(line: string, sourceType: SourceType): string {
-  const placeholders = collectMatches(line, TOKEN_RE);
-  if (placeholders.length === 0) return line;
-  if (sourceType === "env") return line;
-  return `CTX ${placeholders.join(" ")}`;
-}
-
-function normalizeMaskedText(maskedText: string, sourceType: SourceType): string {
-  return maskedText
-    .split(/\r?\n/)
-    .map((line) => normalizeMaskedLine(line, sourceType))
-    .join("\n");
-}
 
 function buildAiBundle(
   masked: string,
-  summary: SummaryItem[],
-  sourceType: SourceType,
-  options: MaskOptions
+  summary: SummaryItem[]
 ): string {
-  const body = options.normalizeContext
-    ? normalizeMaskedText(masked, sourceType)
-    : masked;
+  const body = masked;
   const chunks = splitStreamingChunks(body, CHUNK_MAX_LINES);
   const lines = ["PENTECT_BUNDLE_V1", "[MASKED_BODY]"];
 
@@ -358,9 +338,7 @@ function buildAiBundle(
 
 class LabelBook {
   private readonly valueToLabel = new Map<string, string>();
-  private readonly fieldToLabel = new Map<string, string>();
   private nextValue = 1;
-  private nextField = 1;
 
   readonly mappings: Mapping[] = [];
 
@@ -371,17 +349,6 @@ class LabelBook {
     const label = `<<VALUE_${String(this.nextValue).padStart(3, "0")}>>`;
     this.nextValue += 1;
     this.valueToLabel.set(original, label);
-    this.mappings.push({ label, original, confidence, reason });
-    return label;
-  }
-
-  assignField(original: string, confidence: Confidence, reason: string): string {
-    const existing = this.fieldToLabel.get(original);
-    if (existing) return existing;
-
-    const label = `<<KEY_${String(this.nextField).padStart(3, "0")}>>`;
-    this.nextField += 1;
-    this.fieldToLabel.set(original, label);
     this.mappings.push({ label, original, confidence, reason });
     return label;
   }
@@ -457,12 +424,11 @@ function finalizeResult(
   masked: string,
   book: LabelBook,
   summary: SummaryItem[],
-  sourceType: SourceType,
-  options: MaskOptions
+  sourceType: SourceType
 ): MaskResult {
   return {
     masked,
-    aiBundle: buildAiBundle(masked, summary, sourceType, options),
+    aiBundle: buildAiBundle(masked, summary),
     mappingTable: book.mappings,
     summary,
     sourceType,
@@ -480,7 +446,6 @@ function maskEnv(input: string, options: MaskOptions): MaskResult {
   const authCategories = new Set<string>();
   let totalEntries = 0;
   let sensitiveEntries = 0;
-  let normalizedFields = 0;
 
   const maskedLines = lines.map((line) => {
     const match = line.match(
@@ -517,10 +482,7 @@ function maskEnv(input: string, options: MaskOptions): MaskResult {
       if (authCategory) {
         authCategories.add(authCategory);
       }
-      const keyText = options.normalizeContext
-        ? book.assignField(key, "HIGH", "normalized sensitive env key")
-        : key;
-      if (options.normalizeContext) normalizedFields += 1;
+      const keyText = key;
       const valueLabel = book.assignValue(
         normalizedValue,
         "HIGH",
@@ -535,7 +497,7 @@ function maskEnv(input: string, options: MaskOptions): MaskResult {
 
   const masked = maskedLines.join("\n");
   const chunkCount = splitStreamingChunks(
-    options.normalizeContext ? normalizeMaskedText(masked, "env") : masked,
+    masked,
     CHUNK_MAX_LINES
   ).length;
   const reusedSecrets = [...secretReuse.values()].filter((count) => count > 1)
@@ -565,15 +527,11 @@ function maskEnv(input: string, options: MaskOptions): MaskResult {
             label: "SUMMARY_SENSITIVE_ENTRIES",
             value: String(sensitiveEntries),
           },
-          {
-            label: "SUMMARY_NORMALIZED_KEYS",
-            value: String(normalizedFields),
-          },
         ],
       })
     : [];
 
-  return finalizeResult(masked, book, summary, "env", options);
+  return finalizeResult(masked, book, summary, "env");
 }
 
 function maskNmap(input: string, options: MaskOptions): MaskResult {
@@ -650,7 +608,7 @@ function maskNmap(input: string, options: MaskOptions): MaskResult {
 
   const masked = applyGenericMasks(maskedLines.join("\n"), book);
   const chunkCount = splitStreamingChunks(
-    options.normalizeContext ? normalizeMaskedText(masked, "nmap") : masked,
+    masked,
     CHUNK_MAX_LINES
   ).length;
   const summary = options.includeSummary
@@ -686,7 +644,7 @@ function maskNmap(input: string, options: MaskOptions): MaskResult {
       })
     : [];
 
-  return finalizeResult(masked, book, summary, "nmap", options);
+  return finalizeResult(masked, book, summary, "nmap");
 }
 
 function tryGetHarEntries(input: string): Array<Record<string, unknown>> {
@@ -755,21 +713,13 @@ function maskHar(input: string, options: MaskOptions): MaskResult {
         authReuse.set(value, (authReuse.get(value) ?? 0) + 1);
         text = replaceCaseSensitiveWord(text, value, valueLabel);
 
-        if (options.normalizeContext) {
-          const fieldLabel = book.assignField(
-            name,
-            "LIKELY",
-            "normalized HAR header name"
-          );
-          text = replaceCaseSensitiveWord(text, name, fieldLabel);
-        }
       }
     }
   }
 
   const masked = applyGenericMasks(text, book);
   const chunkCount = splitStreamingChunks(
-    options.normalizeContext ? normalizeMaskedText(masked, "har") : masked,
+    masked,
     CHUNK_MAX_LINES
   ).length;
   const reusedAuth = [...authReuse.values()].filter((count) => count > 1)
@@ -799,7 +749,7 @@ function maskHar(input: string, options: MaskOptions): MaskResult {
       })
     : [];
 
-  return finalizeResult(masked, book, summary, "har", options);
+  return finalizeResult(masked, book, summary, "har");
 }
 
 export function maskOutput(
