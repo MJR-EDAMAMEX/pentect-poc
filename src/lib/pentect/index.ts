@@ -342,6 +342,10 @@ class LabelBook {
 
   readonly mappings: Mapping[] = [];
 
+  hasValue(original: string): boolean {
+    return this.valueToLabel.has(original);
+  }
+
   assignValue(original: string, confidence: Confidence, reason: string): string {
     const existing = this.valueToLabel.get(original);
     if (existing) return existing;
@@ -698,6 +702,9 @@ function maskHar(input: string, options: MaskOptions): MaskResult {
         const value = header.value ?? "";
         if (!name || !value) continue;
         if (!HAR_HEADER_RE.test(name)) continue;
+
+        // Skip if this value is actually a URL that was already masked
+        if (/^https?:\/\//i.test(value)) continue;
 
         const category = classifyAuthCategory(name);
         if (category) {
