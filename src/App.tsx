@@ -287,8 +287,6 @@ export default function App() {
   const [displayText, setDisplayText] = useState(buildOutputBody(SAMPLES.env));
   const [activeLabels, setActiveLabels] = useState<string[]>([]);
   const [tableMappings, setTableMappings] = useState<Mapping[]>([]);
-  const [scanStartLine, setScanStartLine] = useState<number | null>(0);
-  const [scanEndLine, setScanEndLine] = useState<number | null>(0);
   const previousResultRef = useRef<MaskResult | null>(null);
   const previousInputRef = useRef<string | null>(null);
   const previousSourceTypeRef = useRef<SourceType>("env");
@@ -408,8 +406,6 @@ export default function App() {
                   text={displayText}
                   mappings={tableMappings}
                   activeLabels={activeLabels}
-                  scanStartLine={scanStartLine}
-                  scanEndLine={scanEndLine}
                 />
               ) : (
                 <div />
