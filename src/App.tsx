@@ -68,22 +68,22 @@ const CONFIDENCE_COLORS: Record<
   { bg: string; text: string; border: string; badge: string }
 > = {
   HIGH: {
-    bg: "bg-emerald-100",
-    text: "text-emerald-800",
-    border: "border-emerald-300",
-    badge: "bg-emerald-600 text-white",
+    bg: "bg-zinc-100",
+    text: "text-zinc-700",
+    border: "border-zinc-300",
+    badge: "bg-zinc-600 text-white",
   },
   LIKELY: {
-    bg: "bg-amber-100",
-    text: "text-amber-800",
-    border: "border-amber-300",
-    badge: "bg-amber-500 text-white",
+    bg: "bg-zinc-100",
+    text: "text-zinc-700",
+    border: "border-zinc-300",
+    badge: "bg-zinc-500 text-white",
   },
   MAYBE: {
-    bg: "bg-orange-100",
-    text: "text-orange-800",
-    border: "border-orange-300",
-    badge: "bg-orange-500 text-white",
+    bg: "bg-zinc-100",
+    text: "text-zinc-600",
+    border: "border-zinc-300",
+    badge: "bg-zinc-500 text-white",
   },
   UNKNOWN: {
     bg: "bg-zinc-100",
@@ -152,7 +152,7 @@ function renderHighlightedFragments(
         key={`${keyPrefix}:${index}`}
         title={mapping ? `${mapping.original} | ${mapping.reason}` : part.text}
         className={`inline px-1 py-0.5 rounded-sm border font-semibold  ${colors.bg} ${colors.text} ${colors.border} ${
-          isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
+          isActive ? "" : ""
         }`}
       >
         {part.text}
@@ -173,32 +173,22 @@ function HighlightedOutput({
   text,
   mappings,
   activeLabels,
-  scanStartLine,
-  scanEndLine,
 }: {
   text: string;
   mappings: Mapping[];
   activeLabels: string[];
-  scanStartLine: number | null;
-  scanEndLine: number | null;
+  scanStartLine?: number | null;
+  scanEndLine?: number | null;
 }) {
   const lines = text.split(/\r?\n/);
 
   return (
     <pre className="m-0 whitespace-pre-wrap break-all font-mono text-[13px] leading-6">
       {lines.map((line, index) => {
-        const isScanning =
-          scanStartLine !== null &&
-          scanEndLine !== null &&
-          index >= scanStartLine &&
-          index <= scanEndLine;
-
         return (
           <span
             key={index}
-            className={`relative block px-1  ${
-              isScanning ? "bg-amber-100" : ""
-            }`}
+            className="relative block px-1"
           >
             <span className="relative">
               {renderHighlightedFragments(line, mappings, activeLabels, `line-${index}`)}
@@ -457,13 +447,13 @@ export default function App() {
                     <TableRow
                       key={`${mapping.label}:${mapping.original}`}
                       className={` ${
-                        isActive ? "bg-amber-50/80" : ""
+                        ""
                       }`}
                     >
                       <TableCell className="py-2">
                         <code
                           className={`rounded-sm border px-1.5 py-0.5 text-xs  ${colors.bg} ${colors.text} ${colors.border} ${
-                            isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
+                            isActive ? "" : ""
                           }`}
                         >
                           {mapping.label}
