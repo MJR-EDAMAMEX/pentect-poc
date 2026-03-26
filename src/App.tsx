@@ -415,38 +415,48 @@ export default function App() {
         </section>
 
         <section className="mt-5 rounded-2xl border border-border bg-card p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-medium">対応表</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={async () => {
+                const lines = tableMappings.map(
+                  (m) => `${m.label}\t${m.reason}\t${m.confidence}`
+                );
+                await navigator.clipboard.writeText(lines.join("\n"));
+              }}
+            >
+              <Copy className="mr-1 h-3.5 w-3.5" />
+              対応表をコピー
+            </Button>
+          </div>
           <div className="min-h-[220px] overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/30">
                   <TableHead className="w-[180px] text-xs">ラベル</TableHead>
-                  <TableHead className="text-xs">元の値</TableHead>
+                  <TableHead className="text-xs">説明</TableHead>
                   <TableHead className="w-[100px] text-xs">確信度</TableHead>
-                  <TableHead className="text-xs">理由</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {tableMappings.map((mapping) => {
                   const colors = CONFIDENCE_COLORS[mapping.confidence];
-                  const isActive = activeLabels.includes(mapping.label);
                   return (
                     <TableRow
-                      key={`${mapping.label}:${mapping.original}`}
-                      className={` ${
-                        ""
-                      }`}
+                      key={`${mapping.label}:${mapping.reason}`}
                     >
                       <TableCell className="py-2">
                         <code
-                          className={`rounded-sm border px-1.5 py-0.5 text-xs  ${colors.bg} ${colors.text} ${colors.border} ${
-                            isActive ? "" : ""
-                          }`}
+                          className={`rounded-sm border px-1.5 py-0.5 text-xs ${colors.bg} ${colors.text} ${colors.border}`}
                         >
                           {mapping.label}
                         </code>
                       </TableCell>
-                      <TableCell className="break-all py-2 font-mono text-xs text-muted-foreground">
-                        {mapping.original}
+                      <TableCell className="py-2 text-xs text-muted-foreground">
+                        {mapping.reason}
                       </TableCell>
                       <TableCell className="py-2">
                         <Badge
@@ -455,9 +465,6 @@ export default function App() {
                         >
                           {mapping.confidence}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="py-2 text-xs text-muted-foreground">
-                        {mapping.reason}
                       </TableCell>
                     </TableRow>
                   );
