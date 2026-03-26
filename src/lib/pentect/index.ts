@@ -589,7 +589,6 @@ function maskNmap(input: string, options: MaskOptions): MaskResult {
         services.set(service, (services.get(service) ?? 0) + 1);
       }
 
-      const portLabel = book.assignValue(port, "LIKELY", "nmap port number");
       let suffix = rest;
       if (rest.trim()) {
         const versionLabel = book.assignValue(
@@ -600,7 +599,7 @@ function maskNmap(input: string, options: MaskOptions): MaskResult {
         suffix = ` ${versionLabel}`;
       }
 
-      return `${portLine[1]}${portLabel}/${portLine[3]}${portLine[4]}${state}${portLine[6]}${service}${suffix}`;
+      return `${portLine[1]}${port}/${portLine[3]}${portLine[4]}${state}${portLine[6]}${service}${suffix}`;
     }
 
     return line;
