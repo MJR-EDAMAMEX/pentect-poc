@@ -294,37 +294,11 @@ export default function App() {
   const previousSourceTypeRef = useRef<SourceType>("env");
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (!input.trim()) {
-        setResult(null);
-        return;
-      }
-
-      try {
-        const previousResult =
-          previousSourceTypeRef.current === sourceType
-            ? previousResultRef.current
-            : null;
-        const stableResult = reconcileResultLabels(
-          maskOutput(input, sourceType, DEFAULT_MASK_OPTIONS),
-          previousResult
-        );
-        setResult(stableResult);
-      } catch {
-        setResult(null);
-      }
-    }, 180);
-
-    return () => window.clearTimeout(timer);
-  }, [input, sourceType]);
-
-  useEffect(() => {
-    if (!result) {
-      setDisplayText(buildOutputBody(input));
+    if (!input.trim()) {
+      setResult(null);
+      setDisplayText("");
       setActiveLabels([]);
       setTableMappings([]);
-      setScanStartLine(null);
-      setScanEndLine(null);
       previousResultRef.current = null;
       previousInputRef.current = input;
       previousSourceTypeRef.current = sourceType;
@@ -332,16 +306,32 @@ export default function App() {
       return;
     }
 
-    setDisplayText(buildOutputBody(result.masked));
-    setActiveLabels(result.mappingTable.map((m) => m.label));
-    setTableMappings(result.mappingTable);
-    setScanStartLine(null);
-    setScanEndLine(null);
-    previousResultRef.current = result;
+    try {
+      const previousResult =
+        previousSourceTypeRef.current === sourceType
+          ? previousResultRef.current
+          : null;
+      const stableResult = reconcileResultLabels(
+        maskOutput(input, sourceType, DEFAULT_MASK_OPTIONS),
+        previousResult
+      );
+      setResult(stableResult);
+      setDisplayText(buildOutputBody(stableResult.masked));
+      setActiveLabels(stableResult.mappingTable.map((m) => m.label));
+      setTableMappings(stableResult.mappingTable);
+      previousResultRef.current = stableResult;
+    } catch {
+      setResult(null);
+      setDisplayText("");
+      setActiveLabels([]);
+      setTableMappings([]);
+      previousResultRef.current = null;
+    }
+
     previousInputRef.current = input;
     previousSourceTypeRef.current = sourceType;
     setCaptureReady(true);
-  }, [input, result, sourceType]);
+  }, [input, sourceType]);
 
   const handleCopy = async () => {
     if (!result) return;
