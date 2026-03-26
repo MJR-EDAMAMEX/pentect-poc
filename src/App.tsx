@@ -93,21 +93,6 @@ const CONFIDENCE_COLORS: Record<
   },
 };
 
-const MAX_SCAN_STEPS = 18;
-const ANIMATION_TOTAL_MS = 9200;
-
-interface OutputFrame {
-  text: string;
-  activeLabels: string[];
-  tableMappings: Mapping[];
-  scanStartLine: number | null;
-  scanEndLine: number | null;
-}
-
-function lineIndexAtOffset(text: string, offset: number): number {
-  if (offset <= 0) return 0;
-  return text.slice(0, offset).split(/\r?\n/).length - 1;
-}
 
 function parseLabelParts(label: string): { prefix: string; number: number } | null {
   const match = label.match(/^<<([A-Z]+)_(\d+)>>$/);
@@ -131,57 +116,6 @@ function replaceSorted(text: string, replacements: Array<[string, string]>): str
   return result;
 }
 
-function buildScanRanges(
-  totalLines: number,
-  maxSteps: number
-): Array<{ start: number; end: number }> {
-  if (totalLines <= 0) return [];
-
-  const chunkSize = Math.max(1, Math.ceil(totalLines / maxSteps));
-  const ranges: Array<{ start: number; end: number }> = [];
-
-  for (let start = 0; start < totalLines; start += chunkSize) {
-    ranges.push({
-      start,
-      end: Math.min(totalLines - 1, start + chunkSize - 1),
-    });
-  }
-
-  return ranges;
-}
-
-function buildLineDiffRange(
-  previousText: string,
-  nextText: string
-): { prefix: number; suffix: number; changedCount: number } {
-  const previousLines = previousText.split(/\r?\n/);
-  const nextLines = nextText.split(/\r?\n/);
-  let prefix = 0;
-
-  while (
-    prefix < previousLines.length &&
-    prefix < nextLines.length &&
-    previousLines[prefix] === nextLines[prefix]
-  ) {
-    prefix += 1;
-  }
-
-  let suffix = 0;
-  while (
-    suffix < previousLines.length - prefix &&
-    suffix < nextLines.length - prefix &&
-    previousLines[previousLines.length - 1 - suffix] ===
-      nextLines[nextLines.length - 1 - suffix]
-  ) {
-    suffix += 1;
-  }
-
-  return {
-    prefix,
-    suffix,
-    changedCount: Math.max(0, nextLines.length - prefix - suffix),
-  };
-}
 
 function renderHighlightedFragments(
   text: string,
@@ -217,7 +151,7 @@ function renderHighlightedFragments(
       <span
         key={`${keyPrefix}:${index}`}
         title={mapping ? `${mapping.original} | ${mapping.reason}` : part.text}
-        className={`inline px-1 py-0.5 rounded-sm border font-semibold transition-all duration-300 ${colors.bg} ${colors.text} ${colors.border} ${
+        className={`inline px-1 py-0.5 rounded-sm border font-semibold  ${colors.bg} ${colors.text} ${colors.border} ${
           isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
         }`}
       >
@@ -262,7 +196,7 @@ function HighlightedOutput({
         return (
           <span
             key={index}
-            className={`relative block px-1 transition-colors duration-300 ${
+            className={`relative block px-1  ${
               isScanning ? "bg-amber-100" : ""
             }`}
           >
@@ -354,124 +288,6 @@ function reconcileResultLabels(
   };
 }
 
-function buildDiffOutputFrames(
-  previousInput: string | null,
-  nextInput: string,
-  previousResult: MaskResult | null,
-  nextResult: MaskResult
-): OutputFrame[] {
-  const initialText = previousResult
-    ? buildOutputBody(previousResult.masked)
-    : buildOutputBody(nextInput);
-  const finalText = buildOutputBody(nextResult.masked);
-  const initialLines = initialText.split(/\r?\n/);
-  const finalLines = finalText.split(/\r?\n/);
-  const previousLabels = previousResult?.mappingTable ?? [];
-  const inputChanged = previousInput !== null && previousInput !== nextInput;
-  const nextOrder = new Map(
-    nextResult.mappingTable.map((mapping, index) => [mapping.label, index])
-  );
-  const nextLineMappings = nextResult.mappingTable
-    .map((mapping, order) => {
-      const firstIndex = nextInput.indexOf(mapping.original);
-      return {
-        mapping,
-        order,
-        firstIndex,
-        lineIndex:
-          firstIndex === -1
-            ? Number.MAX_SAFE_INTEGER
-            : lineIndexAtOffset(nextInput, firstIndex),
-      };
-    })
-    .sort((left, right) => {
-      const leftIndex =
-        left.firstIndex === -1 ? Number.MAX_SAFE_INTEGER : left.firstIndex;
-      const rightIndex =
-        right.firstIndex === -1 ? Number.MAX_SAFE_INTEGER : right.firstIndex;
-
-      return (
-        leftIndex - rightIndex ||
-        right.mapping.original.length - left.mapping.original.length ||
-        left.order - right.order
-      );
-    });
-  const diffRange = previousResult
-    ? buildLineDiffRange(previousInput ?? "", nextInput)
-    : {
-        prefix: 0,
-        suffix: 0,
-        changedCount: finalLines.length,
-      };
-  const scanRanges =
-    diffRange.changedCount > 0
-      ? buildScanRanges(diffRange.changedCount, MAX_SCAN_STEPS).map((range) => ({
-          start: diffRange.prefix + range.start,
-          end: diffRange.prefix + range.end,
-        }))
-      : [];
-  const frames: OutputFrame[] = [];
-  const visibleMappings = new Map(previousLabels.map((mapping) => [mapping.label, mapping]));
-
-  for (const range of scanRanges) {
-    const newLabels: string[] = [];
-
-    for (const entry of nextLineMappings) {
-      if (entry.lineIndex < range.start || entry.lineIndex > range.end) continue;
-
-      const previousVisible = visibleMappings.get(entry.mapping.label);
-      const mappingChanged =
-        !previousVisible ||
-        previousVisible.original !== entry.mapping.original ||
-        previousVisible.confidence !== entry.mapping.confidence ||
-        previousVisible.reason !== entry.mapping.reason;
-
-      if (!mappingChanged) continue;
-
-      visibleMappings.set(entry.mapping.label, entry.mapping);
-      newLabels.push(entry.mapping.label);
-    }
-
-    const scannedCount = range.end - diffRange.prefix + 1;
-    const previousChangeEnd = initialLines.length - diffRange.suffix;
-    const nextChangeEnd = finalLines.length - diffRange.suffix;
-    const currentLines = [
-      ...finalLines.slice(0, diffRange.prefix + scannedCount),
-      ...initialLines.slice(
-        Math.min(diffRange.prefix + scannedCount, previousChangeEnd),
-        previousChangeEnd
-      ),
-      ...finalLines.slice(nextChangeEnd),
-    ];
-
-    frames.push({
-      text: currentLines.join("\n"),
-      activeLabels: newLabels,
-      tableMappings: [...visibleMappings.values()].sort((left, right) => {
-        return (
-          (nextOrder.get(left.label) ?? Number.MAX_SAFE_INTEGER) -
-          (nextOrder.get(right.label) ?? Number.MAX_SAFE_INTEGER)
-        );
-      }),
-      scanStartLine: range.start,
-      scanEndLine: range.end,
-    });
-  }
-
-  frames.push({
-    text: finalText,
-    activeLabels: [],
-    tableMappings: nextResult.mappingTable,
-    scanStartLine: null,
-    scanEndLine: null,
-  });
-
-  if (!previousResult) {
-    return frames;
-  }
-
-  return inputChanged ? frames : [frames[frames.length - 1]];
-}
 
 export default function App() {
   const [sourceType, setSourceType] = useState<SourceType>("env");
@@ -483,7 +299,6 @@ export default function App() {
   const [tableMappings, setTableMappings] = useState<Mapping[]>([]);
   const [scanStartLine, setScanStartLine] = useState<number | null>(0);
   const [scanEndLine, setScanEndLine] = useState<number | null>(0);
-  const animationTimers = useRef<number[]>([]);
   const previousResultRef = useRef<MaskResult | null>(null);
   const previousInputRef = useRef<string | null>(null);
   const previousSourceTypeRef = useRef<SourceType>("env");
@@ -514,69 +329,28 @@ export default function App() {
   }, [input, sourceType]);
 
   useEffect(() => {
-    animationTimers.current.forEach((timer) => window.clearTimeout(timer));
-    animationTimers.current = [];
-
-    const applyFrame = (frame: OutputFrame) => {
-      setDisplayText(frame.text);
-      setActiveLabels(frame.activeLabels);
-      setTableMappings(frame.tableMappings);
-      setScanStartLine(frame.scanStartLine);
-      setScanEndLine(frame.scanEndLine);
-    };
-
     if (!result) {
-      setCaptureReady(false);
-      const timeoutId = window.setTimeout(() => {
-        applyFrame({
-          text: buildOutputBody(input),
-          activeLabels: [],
-          tableMappings: [],
-          scanStartLine: null,
-          scanEndLine: null,
-        });
-        previousResultRef.current = null;
-        previousInputRef.current = input;
-        previousSourceTypeRef.current = sourceType;
-        setCaptureReady(true);
-      }, 0);
-
-      animationTimers.current.push(timeoutId);
-
+      setDisplayText(buildOutputBody(input));
+      setActiveLabels([]);
+      setTableMappings([]);
+      setScanStartLine(null);
+      setScanEndLine(null);
+      previousResultRef.current = null;
+      previousInputRef.current = input;
+      previousSourceTypeRef.current = sourceType;
+      setCaptureReady(true);
       return;
     }
 
-    const previousResult =
-      previousSourceTypeRef.current === sourceType ? previousResultRef.current : null;
-    const previousInput =
-      previousSourceTypeRef.current === sourceType ? previousInputRef.current : null;
-    const frames = buildDiffOutputFrames(previousInput, input, previousResult, result);
-    const intervalMs = Math.max(
-      480,
-      Math.min(900, Math.floor(ANIMATION_TOTAL_MS / Math.max(frames.length, 1)))
-    );
-
-    setCaptureReady(false);
-
-    frames.forEach((frame, index) => {
-      const timeoutId = window.setTimeout(() => {
-        applyFrame(frame);
-
-        if (index === frames.length - 1) {
-          previousResultRef.current = result;
-          previousInputRef.current = input;
-          previousSourceTypeRef.current = sourceType;
-          setCaptureReady(true);
-        }
-      }, 520 + intervalMs * index);
-
-      animationTimers.current.push(timeoutId);
-    });
-
-    return () => {
-      animationTimers.current.forEach((timer) => window.clearTimeout(timer));
-      animationTimers.current = [];
-    };
+    setDisplayText(buildOutputBody(result.masked));
+    setActiveLabels(result.mappingTable.map((m) => m.label));
+    setTableMappings(result.mappingTable);
+    setScanStartLine(null);
+    setScanEndLine(null);
+    previousResultRef.current = result;
+    previousInputRef.current = input;
+    previousSourceTypeRef.current = sourceType;
+    setCaptureReady(true);
   }, [input, result, sourceType]);
 
   const handleCopy = async () => {
@@ -682,13 +456,13 @@ export default function App() {
                   return (
                     <TableRow
                       key={`${mapping.label}:${mapping.original}`}
-                      className={`transition-colors duration-300 ${
+                      className={` ${
                         isActive ? "bg-amber-50/80" : ""
                       }`}
                     >
                       <TableCell className="py-2">
                         <code
-                          className={`rounded-sm border px-1.5 py-0.5 text-xs transition-all duration-300 ${colors.bg} ${colors.text} ${colors.border} ${
+                          className={`rounded-sm border px-1.5 py-0.5 text-xs  ${colors.bg} ${colors.text} ${colors.border} ${
                             isActive ? "ring-1 ring-amber-500 shadow-sm shadow-amber-200" : ""
                           }`}
                         >
