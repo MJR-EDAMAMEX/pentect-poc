@@ -68,28 +68,28 @@ const CONFIDENCE_COLORS: Record<
   { bg: string; text: string; border: string; badge: string }
 > = {
   HIGH: {
-    bg: "bg-zinc-100",
-    text: "text-zinc-700",
-    border: "border-zinc-300",
-    badge: "bg-zinc-600 text-white",
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    badge: "bg-blue-600 text-white",
   },
   LIKELY: {
-    bg: "bg-zinc-100",
-    text: "text-zinc-700",
-    border: "border-zinc-300",
-    badge: "bg-zinc-500 text-white",
+    bg: "bg-slate-50",
+    text: "text-slate-600",
+    border: "border-slate-200",
+    badge: "bg-slate-500 text-white",
   },
   MAYBE: {
-    bg: "bg-zinc-100",
-    text: "text-zinc-600",
-    border: "border-zinc-300",
-    badge: "bg-zinc-500 text-white",
+    bg: "bg-slate-50",
+    text: "text-slate-500",
+    border: "border-slate-200",
+    badge: "bg-slate-400 text-white",
   },
   UNKNOWN: {
-    bg: "bg-zinc-100",
-    text: "text-zinc-700",
-    border: "border-zinc-300",
-    badge: "bg-zinc-500 text-white",
+    bg: "bg-gray-50",
+    text: "text-gray-500",
+    border: "border-gray-200",
+    badge: "bg-gray-400 text-white",
   },
 };
 
